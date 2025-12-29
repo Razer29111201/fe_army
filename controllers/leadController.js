@@ -3,11 +3,22 @@ import StudentModel from '../models/StudentModel.js';
 import telegramService from '../services/telegramService.js';
 import { getBranchFilter, getCreateBranchId, getBranchCode } from '../utils/branchHelper.js';
 
+// Helper to get sale filter based on role
+function getSaleFilter(req) {
+  // EC và SALE chỉ thấy leads của mình
+  // HOEC, OM, ADMIN thấy tất cả (trong branch của họ)
+  const role = req.user.role_name;
+  if (role === 'EC' || role === 'SALE') {
+    return req.user.id;
+  }
+  return null; // Không filter theo sale_id
+}
+
 // Lấy danh sách leads
 export const getAll = async (req, res, next) => {
   try {
     const { status, fromDate, toDate, search, source, page = 1, limit = 20 } = req.query;
-    const saleId = req.user.role_name === 'SALE' ? req.user.id : null;
+    const saleId = getSaleFilter(req);
     const branchId = getBranchFilter(req);
 
     const result = await LeadModel.findAllWithRelations({
@@ -20,7 +31,7 @@ export const getAll = async (req, res, next) => {
 // Thống kê
 export const getStats = async (req, res, next) => {
   try {
-    const saleId = req.user.role_name === 'SALE' ? req.user.id : null;
+    const saleId = getSaleFilter(req);
     const branchId = getBranchFilter(req);
     const stats = await LeadModel.getStats(saleId, branchId);
     res.json({ success: true, data: stats });
@@ -40,7 +51,7 @@ export const getById = async (req, res, next) => {
 export const getByMonth = async (req, res, next) => {
   try {
     const { year, month } = req.query;
-    const saleId = req.user.role_name === 'SALE' ? req.user.id : null;
+    const saleId = getSaleFilter(req);
     const branchId = getBranchFilter(req);
     const data = await LeadModel.getByMonth(year, month, saleId, branchId);
     res.json({ success: true, data });
@@ -56,7 +67,9 @@ export const create = async (req, res, next) => {
       studentName, studentBirthYear, // Legacy single student
       subjectId, levelId,
       scheduledDate, scheduledTime,
-      source, note
+      source, note,
+      expectedRevenue, // Dự kiến học phí
+      saleId // Giao cho EC cụ thể (cho Manager)
     } = req.body;
 
     // Validation
@@ -64,9 +77,9 @@ export const create = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Thiếu thông tin phụ huynh' });
     }
 
-    // Check duplicate phone - STRICT
+    // Check duplicate phone - cho phép trùng nếu lead cũ bị cancelled/lỗi
     const existingLead = await LeadModel.findByPhone(customerPhone);
-    if (existingLead) {
+    if (existingLead && existingLead.status !== 'cancelled') {
       return res.status(400).json({
         success: false,
         message: `SĐT đã tồn tại: ${existingLead.customer_name} - ${existingLead.student_name} (${existingLead.code})`,
@@ -102,6 +115,9 @@ export const create = async (req, res, next) => {
 
     // Tạo lead cho mỗi học sinh
     const createdLeads = [];
+    // Nếu Manager giao cho EC cụ thể, dùng saleId đó, ngược lại dùng user hiện tại
+    const assignedSaleId = saleId || req.user.id;
+
     for (let i = 0; i < studentList.length; i++) {
       const student = studentList[i];
       const code = await LeadModel.generateCode(branchCode);
@@ -120,8 +136,9 @@ export const create = async (req, res, next) => {
         scheduled_time: scheduledTime || null,
         status,
         source: source || null,
+        expected_revenue: expectedRevenue || 0,
         note: studentList.length > 1 ? `${note || ''} [Anh/chị em: ${studentList.length} HS]`.trim() : note,
-        sale_id: req.user.id
+        sale_id: assignedSaleId
       });
 
       createdLeads.push(lead);
@@ -159,7 +176,9 @@ export const update = async (req, res, next) => {
       subjectId, levelId,
       scheduledDate, scheduledTime,
       status, source, note, rating, feedback,
-      trialClassId, trialSessionsMax
+      trialClassId, trialSessionsMax,
+      expectedRevenue, // Dự kiến học phí
+      actual_revenue, deposit_amount, fee_total // Thêm các field thanh toán
     } = req.body;
 
     const data = {};
@@ -179,6 +198,14 @@ export const update = async (req, res, next) => {
     if (feedback !== undefined) data.feedback = feedback;
     if (trialClassId !== undefined) data.trial_class_id = trialClassId || null;
     if (trialSessionsMax !== undefined) data.trial_sessions_max = trialSessionsMax;
+
+    // Dự kiến học phí
+    if (expectedRevenue !== undefined) data.expected_revenue = expectedRevenue;
+
+    // Các field thanh toán
+    if (actual_revenue !== undefined) data.actual_revenue = actual_revenue;
+    if (deposit_amount !== undefined) data.deposit_amount = deposit_amount;
+    if (fee_total !== undefined) data.fee_total = fee_total;
 
     await LeadModel.update(id, data);
     res.json({ success: true, message: 'Cập nhật thành công' });
@@ -236,20 +263,24 @@ export const markNoShow = async (req, res, next) => {
 };
 
 // Gán lớp học thử
+// Đặt lịch trải nghiệm (chỉ cần ngày, giờ, bộ môn)
 export const assignTrialClass = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { classId, maxSessions } = req.body;
+    const { scheduledDate, scheduledTime, subjectId, note } = req.body;
 
-    if (!classId) {
-      return res.status(400).json({ success: false, message: 'Chọn lớp học thử' });
+    if (!scheduledDate || !scheduledTime) {
+      return res.status(400).json({ success: false, message: 'Vui lòng chọn ngày và giờ' });
     }
 
     const data = {
-      trial_class_id: classId,
-      status: 'trial'
+      scheduled_date: scheduledDate,
+      scheduled_time: scheduledTime,
+      status: 'scheduled'
     };
-    if (maxSessions) data.trial_sessions_max = maxSessions;
+
+    if (subjectId) data.subject_id = subjectId;
+    if (note) data.note = note;
 
     await LeadModel.update(id, data);
 
@@ -257,14 +288,16 @@ export const assignTrialClass = async (req, res, next) => {
     const lead = await LeadModel.findByIdWithRelations(id);
     try {
       await telegramService.sendMessage(
-        `📚 <b>Lead bắt đầu học thử!</b>\n` +
+        `📅 <b>Đặt lịch trải nghiệm!</b>\n` +
         `👶 HS: ${lead.student_name}\n` +
-        `🏫 Lớp: ${lead.trial_class_name}\n` +
-        `📊 Tối đa: ${maxSessions || 3} buổi`
+        `👤 PH: ${lead.customer_name} - ${lead.customer_phone}\n` +
+        `📆 Ngày: ${scheduledDate}\n` +
+        `⏰ Giờ: ${scheduledTime}\n` +
+        (lead.subject_name ? `📚 Môn: ${lead.subject_name}` : '')
       );
     } catch (e) { console.error('Telegram error:', e); }
 
-    res.json({ success: true, message: 'Đã gán lớp học thử' });
+    res.json({ success: true, message: 'Đã đặt lịch trải nghiệm' });
   } catch (error) { next(error); }
 };
 
@@ -317,8 +350,9 @@ export const convertToStudent = async (req, res, next) => {
       studentName, birthYear, gender, school,
       parentName, parentPhone, parentEmail, address,
       subjectId, levelId, sessionsPerWeek, startDate,
+      classId, // Thêm classId để xếp lớp luôn nếu có
       feePackage, feeOriginal, feeDiscount, feeTotal,
-      paymentStatus, paidAmount, note
+      paymentStatus, depositAmount, paidAmount, note
     } = req.body;
 
     const lead = await LeadModel.findByIdWithRelations(id);
@@ -326,11 +360,12 @@ export const convertToStudent = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Không tìm thấy lead' });
     }
 
-    // Tạo học sinh mới với status = pending (chờ CM xếp lớp)
+    // Tạo học sinh mới với status = pending (chờ CM xếp lớp) hoặc active nếu có classId
     const studentCode = await StudentModel.generateCode(lead.branch_code);
-    const student = await StudentModel.create({
+
+    const studentData = {
       branch_id: lead.branch_id,
-      code: studentCode,
+      student_code: studentCode,
       full_name: studentName || lead.student_name,
       birth_year: birthYear || lead.student_birth_year,
       gender: gender || null,
@@ -350,28 +385,42 @@ export const convertToStudent = async (req, res, next) => {
       payment_status: paymentStatus || 'pending',
       paid_amount: paidAmount || 0,
       note: note || null,
-      status: 'pending' // Chờ CM xếp lớp
-    });
+      status: classId ? 'active' : 'pending' // Active nếu có lớp, pending nếu chờ xếp
+    };
 
-    // Cập nhật lead
-    await LeadModel.convertToStudent(id, student.id);
+    // Add optional columns if they exist in DB
+    // class_id và ec_id cần chạy migration trước
+    // studentData.class_id = classId || null;
+    // studentData.ec_id = lead.sale_id;
+
+    const student = await StudentModel.create(studentData);
+
+    // Tính actual_revenue = cọc + đã đóng
+    const actualRevenue = (depositAmount || 0) + (paidAmount || 0);
+
+    // Cập nhật lead với actual_revenue, deposit_amount và fee_total
+    await LeadModel.convertToStudent(id, student.id, actualRevenue, depositAmount || 0, feeTotal || 0);
 
     // Gửi thông báo Telegram cho CM
     try {
+      const paymentInfo = paymentStatus === 'paid' ? 'Đã đóng đủ' :
+        paymentStatus === 'deposit' ? `Cọc ${(depositAmount || 0).toLocaleString('vi-VN')}đ` :
+          paymentStatus === 'partial' ? `Đã đóng ${actualRevenue.toLocaleString('vi-VN')}đ` : 'Chưa đóng';
       await telegramService.sendMessage(
-        `🎉 <b>Học viên mới chờ xếp lớp!</b>\n` +
+        `🎉 <b>Học viên mới${classId ? '' : ' chờ xếp lớp'}!</b>\n` +
         `👶 HS: ${studentName || lead.student_name}\n` +
         `📋 Mã: ${studentCode}\n` +
         `👤 PH: ${parentName || lead.customer_name} - ${parentPhone || lead.customer_phone}\n` +
         `📚 Môn: ${lead.subject_name || '-'}\n` +
-        `💰 Học phí: ${(feeTotal || 0).toLocaleString('vi-VN')}đ (${paymentStatus === 'paid' ? 'Đã đóng' : paymentStatus === 'partial' ? 'Đóng 1 phần' : 'Chưa đóng'})\n` +
-        `⏰ CM vui lòng xếp lớp!`
+        `💰 Học phí: ${(feeTotal || 0).toLocaleString('vi-VN')}đ (${paymentInfo})\n` +
+        `👨‍💼 EC: ${lead.sale_name || '-'}\n` +
+        (classId ? '' : `⏰ CM vui lòng xếp lớp!`)
       );
     } catch (e) { console.error('Telegram error:', e); }
 
     res.json({
       success: true,
-      message: 'Đã chuyển đổi thành học sinh. CM sẽ xếp lớp sau.',
+      message: classId ? 'Đã chuyển đổi và xếp lớp thành công!' : 'Đã chuyển đổi thành học sinh. CM sẽ xếp lớp sau.',
       data: { studentId: student.id, studentCode }
     });
   } catch (error) { next(error); }

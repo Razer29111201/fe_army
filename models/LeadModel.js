@@ -32,6 +32,7 @@ class LeadModel extends BaseModel {
              l.scheduled_time, l.status, l.trial_class_id, l.trial_sessions_max,
              l.trial_sessions_attended, l.converted_student_id, l.rating, l.feedback, 
              l.note, l.source, l.sale_id, l.created_at, l.updated_at,
+             l.actual_revenue, l.deposit_amount, l.fee_total,
              b.name as branch_name, b.code as branch_code,
              s.name as subject_name, 
              lv.name as level_name,
@@ -166,7 +167,7 @@ class LeadModel extends BaseModel {
     const [rows] = await this.db.query(`
       SELECT 
         COUNT(*) as total,
-        SUM(status = 'new') as new_count,
+        SUM(status = 'new') as \`new\`,
         SUM(status = 'scheduled') as scheduled,
         SUM(status = 'attended') as attended,
         SUM(status = 'waiting') as waiting,
@@ -211,11 +212,14 @@ class LeadModel extends BaseModel {
   }
 
   // Chuyển đổi thành học sinh chính thức
-  async convertToStudent(id, studentId) {
+  async convertToStudent(id, studentId, actualRevenue = 0, depositAmount = 0, feeTotal = 0) {
     return this.update(id, {
       status: 'converted',
       converted_student_id: studentId,
-      converted_at: new Date()
+      converted_at: new Date(),
+      actual_revenue: actualRevenue,
+      deposit_amount: depositAmount,
+      fee_total: feeTotal
     });
   }
 

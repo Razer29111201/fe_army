@@ -55,10 +55,12 @@ router.put('/students/:id', authenticate, authorizeRole('SALE', 'ADMIN'), studen
 router.delete('/students/:id', authenticate, authorizeRole('SALE', 'ADMIN'), student.remove);
 
 // CLASSES
-router.get('/classes', authenticate, authorize('class.view'), cls.getAll);
+// CLASSES
+const classViewRoles = ['EC', 'SALE', 'HOEC', 'OM', 'CM', 'TEACHER', 'ADMIN'];
+router.get('/classes', authenticate, authorizeRole(...classViewRoles), cls.getAll);
 router.get('/classes/stats', authenticate, cls.getStats);
-router.get('/classes/:id', authenticate, authorize('class.view'), cls.getById);
-router.get('/classes/:id/students', authenticate, authorize('class.view'), cls.getStudents);
+router.get('/classes/:id', authenticate, authorizeRole(...classViewRoles), cls.getById);
+router.get('/classes/:id/students', authenticate, authorizeRole(...classViewRoles), cls.getStudents);
 router.post('/classes', authenticate, authorizeRole('CM', 'ADMIN'), cls.create);
 router.put('/classes/:id', authenticate, authorizeRole('CM', 'ADMIN'), cls.update);
 router.delete('/classes/:id', authenticate, authorizeRole('ADMIN'), cls.remove);
@@ -84,21 +86,24 @@ router.post('/trial-students/:id/convert', authenticate, authorizeRole('SALE'), 
 router.delete('/trial-students/:id', authenticate, authorizeRole('SALE'), trial.remove);
 
 // LEADS (Gộp trải nghiệm + học thử)
-router.get('/leads', authenticate, authorizeRole('SALE'), lead.getAll);
-router.get('/leads/stats', authenticate, authorizeRole('SALE'), lead.getStats);
-router.get('/leads/month', authenticate, authorizeRole('SALE'), lead.getByMonth);
-router.get('/leads/check-phone', authenticate, authorizeRole('SALE'), lead.checkPhone);
-router.get('/leads/:id', authenticate, authorizeRole('SALE'), lead.getById);
-router.post('/leads', authenticate, authorizeRole('SALE'), lead.create);
-router.put('/leads/:id', authenticate, authorizeRole('SALE'), lead.update);
-router.delete('/leads/:id', authenticate, authorizeRole('SALE'), lead.remove);
-router.post('/leads/:id/attended', authenticate, authorizeRole('SALE'), lead.markAttended);
-router.post('/leads/:id/no-show', authenticate, authorizeRole('SALE'), lead.markNoShow);
-router.post('/leads/:id/complete-session', authenticate, authorizeRole('SALE'), lead.completeSession);
-router.post('/leads/:id/assign-class', authenticate, authorizeRole('SALE'), lead.assignTrialClass);
-router.post('/leads/:id/convert', authenticate, authorizeRole('SALE'), lead.convertToStudent);
-router.post('/leads/:id/call-log', authenticate, lead.addCallLog);
-router.get('/leads/:id/call-logs', authenticate, lead.getCallLogs);
+// EC, SALE, HOEC, OM, ADMIN được truy cập
+const leadRoles = ['EC', 'SALE', 'HOEC', 'OM', 'ADMIN'];
+router.get('/leads', authenticate, authorizeRole(...leadRoles), lead.getAll);
+router.get('/leads/stats', authenticate, authorizeRole(...leadRoles), lead.getStats);
+router.get('/leads/month', authenticate, authorizeRole(...leadRoles), lead.getByMonth);
+router.get('/leads/check-phone', authenticate, authorizeRole(...leadRoles), lead.checkPhone);
+router.get('/leads/:id', authenticate, authorizeRole(...leadRoles), lead.getById);
+router.post('/leads', authenticate, authorizeRole(...leadRoles), lead.create);
+router.put('/leads/:id', authenticate, authorizeRole(...leadRoles), lead.update);
+router.delete('/leads/:id', authenticate, authorizeRole('HOEC', 'OM', 'ADMIN'), lead.remove); // Chỉ manager được xóa
+router.post('/leads/:id/attended', authenticate, authorizeRole(...leadRoles), lead.markAttended);
+router.post('/leads/:id/no-show', authenticate, authorizeRole(...leadRoles), lead.markNoShow);
+router.post('/leads/:id/complete-session', authenticate, authorizeRole(...leadRoles), lead.completeSession);
+router.post('/leads/:id/schedule', authenticate, authorizeRole(...leadRoles), lead.assignTrialClass); // Đặt lịch trải nghiệm
+router.post('/leads/:id/assign-class', authenticate, authorizeRole(...leadRoles), lead.assignTrialClass); // Legacy alias
+router.post('/leads/:id/convert', authenticate, authorizeRole(...leadRoles), lead.convertToStudent);
+router.post('/leads/:id/call-log', authenticate, authorizeRole(...leadRoles), lead.addCallLog);
+router.get('/leads/:id/call-logs', authenticate, authorizeRole(...leadRoles), lead.getCallLogs);
 
 // SESSIONS
 router.get('/sessions', authenticate, authorize('session.view'), session.getAll);
