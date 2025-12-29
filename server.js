@@ -45,7 +45,7 @@ app.use('/api/auth/login', authLimiter);
 // CORS
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',') 
-  : ['http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:3001', 'http://localhost:8080'];
+  : ['http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:3000', 'http://localhost:8080'];
 
 app.use(cors({
   origin: (origin, callback) => {
