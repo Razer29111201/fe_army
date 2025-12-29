@@ -11,6 +11,9 @@ import './services/cronService.js';
 
 const app = express();
 
+// Trust proxy for deployment behind reverse proxy (Render, Heroku, etc.)
+app.set('trust proxy', 1);
+
 // Security Headers
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
@@ -19,33 +22,39 @@ app.use(helmet({
 // Compression
 app.use(compression());
 
-// Rate Limiting
+// Rate Limiting - with validation disabled for proxy environments
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // 100 requests per window
   message: { success: false, message: 'Quá nhiều request, vui lòng thử lại sau' },
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  validate: { xForwardedForHeader: false } // Disable X-Forwarded-For validation
 });
 
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 10, // 10 login attempts per hour
-  message: { success: false, message: 'Quá nhiều lần đăng nhập thất bại, vui lòng thử lại sau 1 giờ' }
+  message: { success: false, message: 'Quá nhiều lần đăng nhập thất bại, vui lòng thử lại sau 1 giờ' },
+  validate: { xForwardedForHeader: false }
 });
 
 app.use('/api', limiter);
 app.use('/api/auth/login', authLimiter);
 
 // CORS
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:3000', 'http://localhost:8080'];
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',') 
+  : ['http://localhost:5500', 'http://127.0.0.1:5500', 'http://localhost:3001', 'http://localhost:8080'];
 
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, curl, etc)
     if (!origin) return callback(null, true);
+    // Allow all origins in production or check allowedOrigins
+    if (process.env.NODE_ENV === 'production' || allowedOrigins.some(o => origin.startsWith(o.replace(/:\d+$/, '')))) {
+      return callback(null, true);
+    }
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
@@ -63,13 +72,11 @@ app.use('/api', routes);
 
 // Health check
 app.get('/', (req, res) => {
-  headers: {
-    Authorization: `Bearer ${localStorage.getItem('token')}`
-  }
-  res.json({
+  res.json({ 
     message: 'LMS API Server',
     version: '3.0.0',
-    status: 'running'
+    status: 'running',
+    env: process.env.NODE_ENV || 'development'
   });
 });
 
